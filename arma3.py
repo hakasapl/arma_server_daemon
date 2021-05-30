@@ -66,7 +66,7 @@ def lowercase_all(dir):
                 pass # can't rename it, so what
 
     # starts from the bottom so paths further up remain valid after renaming
-    for root, dirs, files in os.walk( dir, topdown=False ):
+    for root, dirs, files in os.walk(dir, topdown=False):
         rename_all(root, dirs)
         rename_all(root, files)
 
@@ -81,6 +81,18 @@ def getServerPathFromName(name, serverlist):
             return SERVER_DIR
     
     return None
+
+def getModName(dir):
+    file = dir + "/mod.cpp"
+
+    with open(file, "r") as meta:
+        for line in meta:
+            if line.startswith("name"):
+                name = line.partition("\"")[2]
+                name = name.partition("\"")[0]
+                return name
+
+    return ""
 
 def main():
     # load existing config
@@ -99,49 +111,75 @@ def main():
 
     # Handle cli arguments
     parser = argparse.ArgumentParser()
+    # -s parameter
     parser.add_argument("-s", "--save", help="Save steam login info to config file", action="store_true")
 
     subparsers = parser.add_subparsers(dest="subcommand")
 
+    # Create
     parser_create = subparsers.add_parser("create", help="create a new arma 3 server installation")
     parser_create.add_argument("name", nargs=1, help="Name of server to be created")
 
+    # Delete
     parser_create = subparsers.add_parser("delete", help="delete arma 3 server installation")
     parser_create.add_argument("name", nargs=1, help="Name of server to be deleted")
 
+    # Update
     parser_update = subparsers.add_parser("update", help="update existing arma 3 server")
     parser_update.add_argument("name", nargs=1, help="Name of server to be updated")
     parser_update.add_argument("--mods-only", help="Only update mods", action="store_true")
     parser_update.add_argument("--server-only", help="Only update server", action="store_true")
 
+    # Mods
     parser_mods = subparsers.add_parser("mods", help="Manage mods for existing arma 3 server")
     parser_mods.add_argument("name", nargs=1, help="Name of server to be modified")
     subparsers_mods = parser_mods.add_subparsers(dest="subtask")
+    
+    # Mods > Add
     parser_mods_add = subparsers_mods.add_parser("add", help="Add a new mod from the steam workshop")
     parser_mods_add.add_argument("mod", nargs="+", help="URL(s) of mod on steam workshop, or workshop ID")
+    
+    # Mods > Delete
     parser_mods_delete = subparsers_mods.add_parser("delete", help="Delete a mod")
     parser_mods_delete.add_argument("mod", nargs="+", help="URL(s) of mod on steam workshop, or workshop ID")
+    
+    # Mods > List
     parser_mods_list = subparsers_mods.add_parser("list", help="List all mods")
 
+    # Instance
     parser_instance = subparsers.add_parser("instance", help="edit instances within server")
     parser_instance.add_argument("name", nargs=1, help="Name of server to be modified")
     subparsers_instance = parser_instance.add_subparsers(dest="subtask")
+    
+    # Instance > Add
     parser_instance_add = subparsers_instance.add_parser("add", help="Add a new instance")
     parser_instance_add.add_argument("i_name", nargs=1, help="Name of instance")
     
+    # Instance > Mods
     parser_instance_mods = subparsers_instance.add_parser("mods", help="Enable/disable mods on instance")
     parser_instance_mods.add_argument("i_name", nargs=1, help="Name of instance")
     subparsers_instance_mods = parser_instance_mods.add_subparsers(dest="subsubtask")
+    
+    # Instance > Mods > Enable
     parser_instance_mods_enable = subparsers_instance_mods.add_parser("enable", help="enable a mod")
     parser_instance_mods_enable.add_argument("mod", nargs="+", help="URL(s) of mod on steam workshop, or workshop ID")
+    
+    # Instance > Mods > Disable
     parser_instance_mods_disable = subparsers_instance_mods.add_parser("disable", help="disable a mod")
     parser_instance_mods_disable.add_argument("mod", nargs="+", help="URL(s) of mod on steam workshop, or workshop ID")
+    
+    # Instance > Mods > List
     parser_instance_mods_disable = subparsers_instance_mods.add_parser("list", help="List enabled mods")
 
+    # Instance > Delete
     parser_instance_delete = subparsers_instance.add_parser("delete", help="Delete instance")
     parser_instance_delete.add_argument("i_name", nargs=1, help="Name of instance")
+    
+    # Instance > Start
     parser_instance_start = subparsers_instance.add_parser("start", help="Start an instance")
     parser_instance_start.add_argument("i_name", nargs=1, help="Name of instance")
+    
+    # Instance > List
     parser_instance_list = subparsers_instance.add_parser("list", help="list instances")
 
     args = parser.parse_args()
@@ -253,6 +291,21 @@ def main():
                     with open(SERVER_CONF_LOCATION, 'w') as serverconfig_file:
                         serverconfig.write(serverconfig_file)
 
+            if args.subtask == 'delete':
+                print("Not yet implemented")
+                exit(1)
+
+            if args.subtask == 'list':
+                serverconfig = configparser.ConfigParser()
+                serverconfig.read(SERVER_CONF_LOCATION)
+                EXISTING_MODS = serverconfig['server']['mods'].split(",")
+
+                print("Workshop ID\t\tMod Name")
+                for mod in EXISTING_MODS:
+                    path = SERVER_DIR + "/" + SERVER_MOD_DIR + mod
+                    name = getModName(path)
+                    print(mod + "\t\t" + name)
+
         if args.subcommand == 'instance':
             SERVER_DIR = getServerPathFromName(args.name[0], SERVER_LIST)
             SERVER_CONF_LOCATION = SERVER_DIR + "/config.ini"
@@ -353,6 +406,17 @@ def main():
 
                         with open(SERVER_CONF_LOCATION, 'w') as serverconfig_file:
                             serverconfig.write(serverconfig_file)
+                
+                if args.subsubtask == 'list':
+                    serverconfig = configparser.ConfigParser()
+                    serverconfig.read(SERVER_CONF_LOCATION)
+                    EXISTING_MODS = serverconfig[INSTANCE_NAME]['mods'].split(",")
+
+                    print("Workshop ID\t\tMod Name")
+                    for mod in EXISTING_MODS:
+                        path = SERVER_DIR + "/" + SERVER_MOD_DIR + mod
+                        name = getModName(path)
+                        print(mod + "\t\t" + name)
             
             if args.subtask == 'start':
                 INSTANCE_NAME = args.i_name[0]
