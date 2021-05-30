@@ -3,6 +3,8 @@ from shutil import which
 import argparse
 import configparser
 import subprocess
+import urllib.parse as urlparse
+import shutil
 
 steamcmd_binary = "steamcmd"
 tmux_binary = "tmux"
@@ -16,6 +18,28 @@ def getArmaServer(username, password, dir):
 
     # automated steamcmd command
     steamcmd_run = subprocess.run(["steamcmd", "+login", username, password, "+force_install_dir", dir, "+app_update", arma3_server_steam_code, "validate", "+quit"])
+
+    print("\n####################")
+    print("SteamCMD Closed")
+    print("####################\n")
+
+    return steamcmd_run.returncode
+
+def getSteamMods(username, password, mod_ids, dir):
+    arma3_workshop_code = "107410"
+
+    print("\n####################")
+    print("Starting SteamCMD...")
+    print("####################\n")
+
+    # automated steamcmd command
+    mod_requests = []
+    for mod_id in mod_ids:
+        mod_requests.append("+workshop_download_item")
+        mod_requests.append(arma3_workshop_code)
+        mod_requests.append(mod_id)
+    
+    steamcmd_run = subprocess.run(["steamcmd", "+login", username, password, "+force_install_dir", dir] + mod_requests + ["+quit"])
 
     print("\n####################")
     print("SteamCMD Closed")
@@ -65,13 +89,29 @@ def main():
     parser_modify = subparsers.add_parser("modify", help="modify existing arma 3 server")
     parser_modify.add_argument("name", nargs=1, help="Name of server to be modified")
     parser_modify.add_argument("-m", "--mod", nargs="?", help="Add mod (by steam workshop URL) to server", action="append")
-    parser_modify.add_argument("-p", "--port", type=int, help="Set port of server")
 
-    #parser.add_argument("delete", nargs="?", help="delete a server instance")
-    #parser.add_argument("start", nargs="?", help="start a server instance")
-    #parser.add_argument("stop", nargs="?", help="stop a server instance")
-    #parser.add_argument("shell", nargs="?", help="access a server instance console")
-    #parser.add_argument("list", nargs="?", help="list all servers")
+    parser_instance = subparsers.add_parser("instance", help="edit instances within server")
+    parser_instance.add_argument("name", nargs=1, help="Name of server to be modified")
+    subparsers_instance = parser_instance.add_subparsers(dest="subtask")
+    parser_instance_add = subparsers_instance.add_parser("add", help="Add a new instance")
+    parser_instance_add.add_argument("i_name", nargs=1, help="Name of instance")
+    parser_instance_edit = subparsers_instance.add_parser("edit", help="Open arma config file")
+    parser_instance_edit.add_argument("i_name", nargs=1, help="Name of instance")
+    parser_instance_modify = subparsers_instance.add_parser("modify", help="Modify instance")
+    parser_instance_modify.add_argument("i_name", nargs=1, help="Name of instance")
+    parser_instance_modify.add_argument("-m", "--mod", nargs="?", help="Enable mod already downloaded", action="append")
+    parser_instance_modify.add_argument("-p", "--port", nargs="?", help="Set network port of instance")
+
+    parser_instance_delete = subparsers_instance.add_parser("delete", help="Delete instance")
+    parser_instance_delete.add_argument("i_name", nargs=1, help="Name of instance")
+    parser_instance_start = subparsers_instance.add_parser("start", help="Start an instance")
+    parser_instance_start.add_argument("i_name", nargs=1, help="Name of instance")
+    parser_instance_stop = subparsers_instance.add_parser("stop", help="Stop instance")
+    parser_instance_stop.add_argument("i_name", nargs=1, help="Name of instance")
+    parser_instance_shell = subparsers_instance.add_parser("shell", help="Access shell of instance")
+    parser_instance_shell.add_argument("i_name", nargs=1, help="Name of instance")
+    parser_instance_list = subparsers_instance.add_parser("list", help="list instances")
+    parser_instance_list.add_argument("i_name", nargs=1, help="Name of instance")
 
     args = parser.parse_args()
     #print(args)  # DEBUG
@@ -88,7 +128,7 @@ def main():
         exit(1)
 
     if args.subcommand is not None:
-        if args.subcommand == 'create' or args.subcommand == 'update':
+        if args.subcommand == 'create' or args.subcommand == 'update' or args.subcommand == 'modify':
             if 'STEAM_USERNAME' not in locals():
                 STEAM_USERNAME = input("What is your steam username? ")
 
@@ -144,10 +184,102 @@ def main():
 
         if args.subcommand == 'modify':
             SERVER_DIR = getServerPathFromName(args.name[0], SERVER_LIST)
+            SERVER_CONF_LOCATION = SERVER_DIR + "/config.ini"
 
             if SERVER_DIR is None:
                 print("That server was not found!")
                 exit(1)
+
+            mod_id_list = []
+            if args.mod is not None:
+                # mods were added
+                for mod_url in args.mod:
+                    parsed_url = urlparse.urlparse(mod_url)
+                    parsed_list = urlparse.parse_qs(parsed_url.query)
+                    if 'id' in parsed_list:
+                        mod_id_list.append(parsed_list['id'][0])
+                    else:
+                        print("No ModID found in URL")
+                        exit(1)
+
+                steam_success = getSteamMods(STEAM_USERNAME, STEAM_PASSWORD, mod_id_list, SERVER_DIR)
+
+                if steam_success == 0:
+                    print("Mod(s) installed successfully")
+                else:
+                    exit(steam_success)
+
+                serverconfig = configparser.ConfigParser()
+                serverconfig.read(SERVER_CONF_LOCATION)
+                EXISTING_MODS = serverconfig['server']['mods'].split(",")
+                EXISTING_EXCLUSIVE = list(set(EXISTING_MODS) - set(mod_id_list))
+                NEW_MODS = EXISTING_EXCLUSIVE + mod_id_list
+                NEW_MODS = [string for string in NEW_MODS if string != ""]  # remove empty string from empty set (if they're there)
+                
+                serverconfig['server']['mods'] = ",".join(NEW_MODS)
+
+                with open(SERVER_CONF_LOCATION, 'w') as serverconfig_file:
+                    serverconfig.write(serverconfig_file)
+
+        if args.subcommand == 'instance':
+            SERVER_DIR = getServerPathFromName(args.name[0], SERVER_LIST)
+            SERVER_CONF_LOCATION = SERVER_DIR + "/config.ini"
+            INSTANCE_NAME = args.i_name[0]
+
+            if args.subtask == 'add':
+                # add new instance
+
+                # get location
+                DEF_LOC = SERVER_DIR + "/instances/" + INSTANCE_NAME
+                INSTANCE_DIR = input("Location of new isntance [" + DEF_LOC + "]? ")
+                if INSTANCE_DIR == "":
+                    INSTANCE_DIR = DEF_LOC
+                
+                # create directory
+                if not os.path.exists(INSTANCE_DIR):
+                    os.makedirs(INSTANCE_DIR)
+
+                # copy template conf file
+                shutil.copyfile("server.cfg.template", INSTANCE_DIR + "/server.cfg")
+
+                serverconfig = configparser.ConfigParser()
+                serverconfig.read(SERVER_CONF_LOCATION)
+                serverconfig[INSTANCE_NAME] = {}
+                serverconfig[INSTANCE_NAME]['path'] = INSTANCE_DIR
+                serverconfig[INSTANCE_NAME]['mods'] = ""
+                serverconfig[INSTANCE_NAME]['port'] = "2302"
+
+                with open(SERVER_CONF_LOCATION, 'w') as serverconfig_file:
+                    serverconfig.write(serverconfig_file)
+
+                print("Instance created")
+
+            if args.subtask == 'modify':
+                # modify instance
+                if args.mod is not None:
+                    # mods to be enabled
+                    mod_id_list = []
+                    for mod_url in args.mod:
+                        parsed_url = urlparse.urlparse(mod_url)
+                        parsed_list = urlparse.parse_qs(parsed_url.query)
+                        if 'id' in parsed_list:
+                            mod_id_list.append(parsed_list['id'][0])
+                        else:
+                            print("No ModID found in URL")
+                            exit(1)
+
+                    serverconfig = configparser.ConfigParser()
+                    serverconfig.read(SERVER_CONF_LOCATION)
+                    EXISTING_MODS = serverconfig[INSTANCE_NAME]['mods'].split(",")
+                    EXISTING_EXCLUSIVE = list(set(EXISTING_MODS) - set(mod_id_list))
+                    NEW_MODS = EXISTING_EXCLUSIVE + mod_id_list
+                    NEW_MODS = [string for string in NEW_MODS if string != ""]  # remove empty string from empty set (if they're there)
+                    
+                    serverconfig[INSTANCE_NAME]['mods'] = ",".join(NEW_MODS)
+
+                    with open(SERVER_CONF_LOCATION, 'w') as serverconfig_file:
+                        serverconfig.write(serverconfig_file)
+
 
         # update config
         config['steam'] = {}
