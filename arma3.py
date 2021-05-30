@@ -128,6 +128,7 @@ def main():
     subparsers_instance = parser_instance.add_subparsers(dest="subtask")
     parser_instance_add = subparsers_instance.add_parser("add", help="Add a new instance")
     parser_instance_add.add_argument("i_name", nargs=1, help="Name of instance")
+    
     parser_instance_mods = subparsers_instance.add_parser("mods", help="Enable/disable mods on instance")
     parser_instance_mods.add_argument("i_name", nargs=1, help="Name of instance")
     subparsers_instance_mods = parser_instance_mods.add_subparsers(dest="subsubtask")
@@ -142,7 +143,6 @@ def main():
     parser_instance_start = subparsers_instance.add_parser("start", help="Start an instance")
     parser_instance_start.add_argument("i_name", nargs=1, help="Name of instance")
     parser_instance_list = subparsers_instance.add_parser("list", help="list instances")
-    parser_instance_list.add_argument("i_name", nargs=1, help="Name of instance")
 
     args = parser.parse_args()
     #print(args)  # DEBUG
@@ -154,6 +154,7 @@ def main():
         exit(1)
 
     if args.subcommand is not None:
+        SERVER_NAME = args.name[0]
         if args.subcommand == 'create' or args.subcommand == 'update' or args.subcommand == 'mods':
             if 'STEAM_USERNAME' not in locals():
                 STEAM_USERNAME = input("What is your steam username? ")
@@ -163,7 +164,6 @@ def main():
 
         if args.subcommand == 'create':
             SERVER_DIR = input("Installation directory for server? ")
-            SERVER_NAME = args.name[0]
             SERVER_CONF_LOCATION = SERVER_DIR + "/config.ini"
 
             # automated steamcmd command
@@ -256,13 +256,13 @@ def main():
         if args.subcommand == 'instance':
             SERVER_DIR = getServerPathFromName(args.name[0], SERVER_LIST)
             SERVER_CONF_LOCATION = SERVER_DIR + "/config.ini"
-            INSTANCE_NAME = args.i_name[0]
 
             serverconfig = configparser.ConfigParser()
             serverconfig.read(SERVER_CONF_LOCATION)
 
             if args.subtask == 'add':
                 # add new instance
+                INSTANCE_NAME = args.i_name[0]
 
                 # get location
                 DEF_LOC = SERVER_DIR + "/instances/" + INSTANCE_NAME
@@ -288,6 +288,7 @@ def main():
                 print("Instance created")
 
             if args.subtask == 'mods':
+                INSTANCE_NAME = args.i_name[0]
                 # modify instance
                 if args.subsubtask == 'enable':
                     if args.mod is not None:
@@ -354,9 +355,8 @@ def main():
                             serverconfig.write(serverconfig_file)
             
             if args.subtask == 'start':
+                INSTANCE_NAME = args.i_name[0]
                 # start an instance
-                serverconfig = configparser.ConfigParser()
-                serverconfig.read(SERVER_CONF_LOCATION)
 
                 if INSTANCE_NAME not in serverconfig:
                     print("Instance not found")
@@ -370,23 +370,27 @@ def main():
 
                 startServer(SERVER_DIR, INSTANCE_DIR, INSTANCE_PORT, INSTANCE_MODS_RELATIVE)
 
-            if args.subcommand == 'list':
-                print("Not yet implemented")
-                exit(1)
+            if args.subtask == 'list':
+                print("Instance Name\t\tPath")
 
-            if args.subcommand == 'delete':
+                for header in serverconfig.keys():
+                    if header != "general" and header != "server" and header != "DEFAULT":
+                        print(header + "\t\t" + serverconfig[header]['path'])
+
+            if args.subtask == 'delete':
                 print("Not yet implemented")
                 exit(1)
 
         # update config
         config['steam'] = {}
+        if args.save:
+            if 'STEAM_USERNAME' in locals():
+                config['steam']['user'] = STEAM_USERNAME
+
+            if 'STEAM_PASSWORD' in locals():
+                config['steam']['password'] = STEAM_PASSWORD
+
         config['state'] = {}
-        if 'STEAM_USERNAME' in locals():
-            config['steam']['user'] = STEAM_USERNAME
-
-        if 'STEAM_PASSWORD' in locals():
-            config['steam']['password'] = STEAM_PASSWORD
-
         if 'SERVER_LIST' in locals():
             config['state']['serverlist'] = ",".join(SERVER_LIST)
 
