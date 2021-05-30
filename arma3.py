@@ -10,6 +10,8 @@ steamcmd_binary = "steamcmd"
 tmux_binary = "tmux"
 def_config_file = "config.ini"
 
+SERVER_MOD_DIR = "steamapps/workshop/content/107410/"
+
 def getArmaServer(username, password, dir):
     arma3_server_steam_code = "233780"
     print("\n####################")
@@ -46,6 +48,27 @@ def getSteamMods(username, password, mod_ids, dir):
     print("####################\n")
 
     return steamcmd_run.returncode
+
+def startServer(path, profile, port, mods):
+    configPath = profile + "/" + "server.cfg"
+    modList = ";".join(mods)
+    arma3server_run = subprocess.run(["./arma3server", "-config=" + configPath, "-port="+ port, "-profile="+ profile, "-mod=" + modList], cwd=path)
+
+    return arma3server_run
+
+def lowercase_all(dir):
+    # renames all subforders of dir, not including dir itself
+    def rename_all(root, items):
+        for name in items:
+            try:
+                os.rename(os.path.join(root, name), os.path.join(root, name.lower()))
+            except OSError:
+                pass # can't rename it, so what
+
+    # starts from the bottom so paths further up remain valid after renaming
+    for root, dirs, files in os.walk( dir, topdown=False ):
+        rename_all(root, dirs)
+        rename_all(root, files)
 
 def getServerPathFromName(name, serverlist):
     SERVER_NAME = None
@@ -105,8 +128,6 @@ def main():
     subparsers_instance = parser_instance.add_subparsers(dest="subtask")
     parser_instance_add = subparsers_instance.add_parser("add", help="Add a new instance")
     parser_instance_add.add_argument("i_name", nargs=1, help="Name of instance")
-    parser_instance_edit = subparsers_instance.add_parser("edit", help="Open arma config file")
-    parser_instance_edit.add_argument("i_name", nargs=1, help="Name of instance")
     parser_instance_mods = subparsers_instance.add_parser("mods", help="Enable/disable mods on instance")
     parser_instance_mods.add_argument("i_name", nargs=1, help="Name of instance")
     subparsers_instance_mods = parser_instance_mods.add_subparsers(dest="subsubtask")
@@ -120,10 +141,6 @@ def main():
     parser_instance_delete.add_argument("i_name", nargs=1, help="Name of instance")
     parser_instance_start = subparsers_instance.add_parser("start", help="Start an instance")
     parser_instance_start.add_argument("i_name", nargs=1, help="Name of instance")
-    parser_instance_stop = subparsers_instance.add_parser("stop", help="Stop instance")
-    parser_instance_stop.add_argument("i_name", nargs=1, help="Name of instance")
-    parser_instance_shell = subparsers_instance.add_parser("shell", help="Access shell of instance")
-    parser_instance_shell.add_argument("i_name", nargs=1, help="Name of instance")
     parser_instance_list = subparsers_instance.add_parser("list", help="list instances")
     parser_instance_list.add_argument("i_name", nargs=1, help="Name of instance")
 
@@ -134,11 +151,6 @@ def main():
     steamcmd_exists = which(steamcmd_binary) is not None
     if not steamcmd_exists:
         print("SteamCMD is not available on this system or is not available in the path.")
-        exit(1)
-
-    tmux_exists = which(tmux_binary) is not None
-    if not tmux_exists:
-        print("tmux is not available on this system or is not available in the path.")
         exit(1)
 
     if args.subcommand is not None:
@@ -204,41 +216,50 @@ def main():
                 print("That server was not found!")
                 exit(1)
 
-            mod_id_list = []
-            if args.mod is not None:
-                # mods were added
-                for mod_url in args.mod:
-                    parsed_url = urlparse.urlparse(mod_url)
-                    parsed_list = urlparse.parse_qs(parsed_url.query)
-                    if 'id' in parsed_list:
-                        mod_id_list.append(parsed_list['id'][0])
+            if args.subtask == 'add':
+                mod_id_list = []
+                if args.mod is not None:
+                    # mods were added
+                    for mod_url in args.mod:
+                        parsed_url = urlparse.urlparse(mod_url)
+                        parsed_list = urlparse.parse_qs(parsed_url.query)
+                        if 'id' in parsed_list:
+                            mod_id_list.append(parsed_list['id'][0])
+                        else:
+                            print("No ModID found in URL")
+                            exit(1)
+
+                    steam_success = getSteamMods(STEAM_USERNAME, STEAM_PASSWORD, mod_id_list, SERVER_DIR)
+
+                    if steam_success == 0:
+                        print("Mod(s) installed successfully")
                     else:
-                        print("No ModID found in URL")
-                        exit(1)
+                        exit(steam_success)
 
-                steam_success = getSteamMods(STEAM_USERNAME, STEAM_PASSWORD, mod_id_list, SERVER_DIR)
+                    # lowercase installed mods
+                    for mod_id in mod_id_list:
+                        path = SERVER_DIR + "/" + SERVER_MOD_DIR + mod_id
+                        lowercase_all(path)
 
-                if steam_success == 0:
-                    print("Mod(s) installed successfully")
-                else:
-                    exit(steam_success)
+                    serverconfig = configparser.ConfigParser()
+                    serverconfig.read(SERVER_CONF_LOCATION)
+                    EXISTING_MODS = serverconfig['server']['mods'].split(",")
+                    EXISTING_EXCLUSIVE = list(set(EXISTING_MODS) - set(mod_id_list))
+                    NEW_MODS = EXISTING_EXCLUSIVE + mod_id_list
+                    NEW_MODS = [string for string in NEW_MODS if string != ""]  # remove empty string from empty set (if they're there)
+                    
+                    serverconfig['server']['mods'] = ",".join(NEW_MODS)
 
-                serverconfig = configparser.ConfigParser()
-                serverconfig.read(SERVER_CONF_LOCATION)
-                EXISTING_MODS = serverconfig['server']['mods'].split(",")
-                EXISTING_EXCLUSIVE = list(set(EXISTING_MODS) - set(mod_id_list))
-                NEW_MODS = EXISTING_EXCLUSIVE + mod_id_list
-                NEW_MODS = [string for string in NEW_MODS if string != ""]  # remove empty string from empty set (if they're there)
-                
-                serverconfig['server']['mods'] = ",".join(NEW_MODS)
-
-                with open(SERVER_CONF_LOCATION, 'w') as serverconfig_file:
-                    serverconfig.write(serverconfig_file)
+                    with open(SERVER_CONF_LOCATION, 'w') as serverconfig_file:
+                        serverconfig.write(serverconfig_file)
 
         if args.subcommand == 'instance':
             SERVER_DIR = getServerPathFromName(args.name[0], SERVER_LIST)
             SERVER_CONF_LOCATION = SERVER_DIR + "/config.ini"
             INSTANCE_NAME = args.i_name[0]
+
+            serverconfig = configparser.ConfigParser()
+            serverconfig.read(SERVER_CONF_LOCATION)
 
             if args.subtask == 'add':
                 # add new instance
@@ -256,8 +277,6 @@ def main():
                 # copy template conf file
                 shutil.copyfile("server.cfg.template", INSTANCE_DIR + "/server.cfg")
 
-                serverconfig = configparser.ConfigParser()
-                serverconfig.read(SERVER_CONF_LOCATION)
                 serverconfig[INSTANCE_NAME] = {}
                 serverconfig[INSTANCE_NAME]['path'] = INSTANCE_DIR
                 serverconfig[INSTANCE_NAME]['mods'] = ""
@@ -273,20 +292,18 @@ def main():
                 if args.subsubtask == 'enable':
                     if args.mod is not None:
                         # mods to be enabled
-                        serverconfig = configparser.ConfigParser()
-                        serverconfig.read(SERVER_CONF_LOCATION)
-                        EXISTING_MODS = serverconfig[INSTANCE_NAME]['mods'].split(",")
+                        AVAILABLE_MODS = serverconfig['server']['mods'].split(",")
 
                         mod_id_list = []
                         for mod_entry in args.mod:
-                            if mod_entry in EXISTING_MODS:
+                            if mod_entry in AVAILABLE_MODS:
                                 mod_id_list.append(mod_entry)
                             else:
                                 parsed_url = urlparse.urlparse(mod_entry)
                                 parsed_list = urlparse.parse_qs(parsed_url.query)
                                 if 'id' in parsed_list:
                                     modid_found = parsed_list['id'][0]
-                                    if modid_found in EXISTING_MODS:
+                                    if modid_found in AVAILABLE_MODS:
                                         mod_id_list.append(modid_found)
                                     else:
                                         print("Mod is not installed on the server")
@@ -295,6 +312,7 @@ def main():
                                     print("Mod is not installed on the server or no ModID found in URL")
                                     exit(1)
 
+                        EXISTING_MODS = serverconfig[INSTANCE_NAME]['mods'].split(",")
                         EXISTING_EXCLUSIVE = list(set(EXISTING_MODS) - set(mod_id_list))
                         NEW_MODS = EXISTING_EXCLUSIVE + mod_id_list
                         NEW_MODS = [string for string in NEW_MODS if string != ""]  # remove empty string from empty set (if they're there)
@@ -306,8 +324,6 @@ def main():
                 elif args.subsubtask == 'disable':
                     if args.mod is not None:
                         # mods to be disabled
-                        serverconfig = configparser.ConfigParser()
-                        serverconfig.read(SERVER_CONF_LOCATION)
                         EXISTING_MODS = serverconfig[INSTANCE_NAME]['mods'].split(",")
 
                         mod_id_list = []
@@ -328,8 +344,6 @@ def main():
                                     print("Mod is not installed on the server or no ModID found in URL")
                                     exit(1)
 
-                        serverconfig = configparser.ConfigParser()
-                        serverconfig.read(SERVER_CONF_LOCATION)
                         EXISTING_MODS = serverconfig[INSTANCE_NAME]['mods'].split(",")
                         NEW_MODS = list(set(EXISTING_MODS) - set(mod_id_list))
                         NEW_MODS = [string for string in NEW_MODS if string != ""]  # remove empty string from empty set (if they're there)
@@ -338,7 +352,31 @@ def main():
 
                         with open(SERVER_CONF_LOCATION, 'w') as serverconfig_file:
                             serverconfig.write(serverconfig_file)
+            
+            if args.subtask == 'start':
+                # start an instance
+                serverconfig = configparser.ConfigParser()
+                serverconfig.read(SERVER_CONF_LOCATION)
 
+                if INSTANCE_NAME not in serverconfig:
+                    print("Instance not found")
+                    exit(1)
+
+                INSTANCE_DIR = serverconfig[INSTANCE_NAME]['path']
+                INSTANCE_PORT = serverconfig[INSTANCE_NAME]['port']
+
+                INSTANCE_MODS = serverconfig[INSTANCE_NAME]['mods'].split(",")
+                INSTANCE_MODS_RELATIVE = [SERVER_MOD_DIR + sub for sub in INSTANCE_MODS]
+
+                startServer(SERVER_DIR, INSTANCE_DIR, INSTANCE_PORT, INSTANCE_MODS_RELATIVE)
+
+            if args.subcommand == 'list':
+                print("Not yet implemented")
+                exit(1)
+
+            if args.subcommand == 'delete':
+                print("Not yet implemented")
+                exit(1)
 
         # update config
         config['steam'] = {}
