@@ -76,19 +76,29 @@ def main():
 
     # Handle cli arguments
     parser = argparse.ArgumentParser()
+    parser.add_argument("-s", "--save", help="Save steam login info to config file", action="store_true")
+
     subparsers = parser.add_subparsers(dest="subcommand")
 
-    parser_create = subparsers.add_parser("create", help="create a new arma 3 server instance")
+    parser_create = subparsers.add_parser("create", help="create a new arma 3 server installation")
     parser_create.add_argument("name", nargs=1, help="Name of server to be created")
+
+    parser_create = subparsers.add_parser("delete", help="delete arma 3 server installation")
+    parser_create.add_argument("name", nargs=1, help="Name of server to be deleted")
 
     parser_update = subparsers.add_parser("update", help="update existing arma 3 server")
     parser_update.add_argument("name", nargs=1, help="Name of server to be updated")
     parser_update.add_argument("--mods-only", help="Only update mods", action="store_true")
     parser_update.add_argument("--server-only", help="Only update server", action="store_true")
 
-    parser_modify = subparsers.add_parser("modify", help="modify existing arma 3 server")
-    parser_modify.add_argument("name", nargs=1, help="Name of server to be modified")
-    parser_modify.add_argument("-m", "--mod", nargs="?", help="Add mod (by steam workshop URL) to server", action="append")
+    parser_mods = subparsers.add_parser("mods", help="Manage mods for existing arma 3 server")
+    parser_mods.add_argument("name", nargs=1, help="Name of server to be modified")
+    subparsers_mods = parser_mods.add_subparsers(dest="subtask")
+    parser_mods_add = subparsers_mods.add_parser("add", help="Add a new mod from the steam workshop")
+    parser_mods_add.add_argument("mod", nargs="+", help="URL(s) of mod on steam workshop, or workshop ID")
+    parser_mods_delete = subparsers_mods.add_parser("delete", help="Delete a mod")
+    parser_mods_delete.add_argument("mod", nargs="+", help="URL(s) of mod on steam workshop, or workshop ID")
+    parser_mods_list = subparsers_mods.add_parser("list", help="List all mods")
 
     parser_instance = subparsers.add_parser("instance", help="edit instances within server")
     parser_instance.add_argument("name", nargs=1, help="Name of server to be modified")
@@ -97,10 +107,14 @@ def main():
     parser_instance_add.add_argument("i_name", nargs=1, help="Name of instance")
     parser_instance_edit = subparsers_instance.add_parser("edit", help="Open arma config file")
     parser_instance_edit.add_argument("i_name", nargs=1, help="Name of instance")
-    parser_instance_modify = subparsers_instance.add_parser("modify", help="Modify instance")
-    parser_instance_modify.add_argument("i_name", nargs=1, help="Name of instance")
-    parser_instance_modify.add_argument("-m", "--mod", nargs="?", help="Enable mod already downloaded", action="append")
-    parser_instance_modify.add_argument("-p", "--port", nargs="?", help="Set network port of instance")
+    parser_instance_mods = subparsers_instance.add_parser("mods", help="Enable/disable mods on instance")
+    parser_instance_mods.add_argument("i_name", nargs=1, help="Name of instance")
+    subparsers_instance_mods = parser_instance_mods.add_subparsers(dest="subsubtask")
+    parser_instance_mods_enable = subparsers_instance_mods.add_parser("enable", help="enable a mod")
+    parser_instance_mods_enable.add_argument("mod", nargs="+", help="URL(s) of mod on steam workshop, or workshop ID")
+    parser_instance_mods_disable = subparsers_instance_mods.add_parser("disable", help="disable a mod")
+    parser_instance_mods_disable.add_argument("mod", nargs="+", help="URL(s) of mod on steam workshop, or workshop ID")
+    parser_instance_mods_disable = subparsers_instance_mods.add_parser("list", help="List enabled mods")
 
     parser_instance_delete = subparsers_instance.add_parser("delete", help="Delete instance")
     parser_instance_delete.add_argument("i_name", nargs=1, help="Name of instance")
@@ -128,7 +142,7 @@ def main():
         exit(1)
 
     if args.subcommand is not None:
-        if args.subcommand == 'create' or args.subcommand == 'update' or args.subcommand == 'modify':
+        if args.subcommand == 'create' or args.subcommand == 'update' or args.subcommand == 'mods':
             if 'STEAM_USERNAME' not in locals():
                 STEAM_USERNAME = input("What is your steam username? ")
 
@@ -182,7 +196,7 @@ def main():
             else:
                 exit(steam_success)
 
-        if args.subcommand == 'modify':
+        if args.subcommand == 'mods':
             SERVER_DIR = getServerPathFromName(args.name[0], SERVER_LIST)
             SERVER_CONF_LOCATION = SERVER_DIR + "/config.ini"
 
@@ -254,31 +268,76 @@ def main():
 
                 print("Instance created")
 
-            if args.subtask == 'modify':
+            if args.subtask == 'mods':
                 # modify instance
-                if args.mod is not None:
-                    # mods to be enabled
-                    mod_id_list = []
-                    for mod_url in args.mod:
-                        parsed_url = urlparse.urlparse(mod_url)
-                        parsed_list = urlparse.parse_qs(parsed_url.query)
-                        if 'id' in parsed_list:
-                            mod_id_list.append(parsed_list['id'][0])
-                        else:
-                            print("No ModID found in URL")
-                            exit(1)
+                if args.subsubtask == 'enable':
+                    if args.mod is not None:
+                        # mods to be enabled
+                        serverconfig = configparser.ConfigParser()
+                        serverconfig.read(SERVER_CONF_LOCATION)
+                        EXISTING_MODS = serverconfig[INSTANCE_NAME]['mods'].split(",")
 
-                    serverconfig = configparser.ConfigParser()
-                    serverconfig.read(SERVER_CONF_LOCATION)
-                    EXISTING_MODS = serverconfig[INSTANCE_NAME]['mods'].split(",")
-                    EXISTING_EXCLUSIVE = list(set(EXISTING_MODS) - set(mod_id_list))
-                    NEW_MODS = EXISTING_EXCLUSIVE + mod_id_list
-                    NEW_MODS = [string for string in NEW_MODS if string != ""]  # remove empty string from empty set (if they're there)
-                    
-                    serverconfig[INSTANCE_NAME]['mods'] = ",".join(NEW_MODS)
+                        mod_id_list = []
+                        for mod_entry in args.mod:
+                            if mod_entry in EXISTING_MODS:
+                                mod_id_list.append(mod_entry)
+                            else:
+                                parsed_url = urlparse.urlparse(mod_entry)
+                                parsed_list = urlparse.parse_qs(parsed_url.query)
+                                if 'id' in parsed_list:
+                                    modid_found = parsed_list['id'][0]
+                                    if modid_found in EXISTING_MODS:
+                                        mod_id_list.append(modid_found)
+                                    else:
+                                        print("Mod is not installed on the server")
+                                        exit(1)
+                                else:
+                                    print("Mod is not installed on the server or no ModID found in URL")
+                                    exit(1)
 
-                    with open(SERVER_CONF_LOCATION, 'w') as serverconfig_file:
-                        serverconfig.write(serverconfig_file)
+                        EXISTING_EXCLUSIVE = list(set(EXISTING_MODS) - set(mod_id_list))
+                        NEW_MODS = EXISTING_EXCLUSIVE + mod_id_list
+                        NEW_MODS = [string for string in NEW_MODS if string != ""]  # remove empty string from empty set (if they're there)
+                        
+                        serverconfig[INSTANCE_NAME]['mods'] = ",".join(NEW_MODS)
+
+                        with open(SERVER_CONF_LOCATION, 'w') as serverconfig_file:
+                            serverconfig.write(serverconfig_file)
+                elif args.subsubtask == 'disable':
+                    if args.mod is not None:
+                        # mods to be disabled
+                        serverconfig = configparser.ConfigParser()
+                        serverconfig.read(SERVER_CONF_LOCATION)
+                        EXISTING_MODS = serverconfig[INSTANCE_NAME]['mods'].split(",")
+
+                        mod_id_list = []
+                        for mod_entry in args.mod:
+                            if mod_entry in EXISTING_MODS:
+                                mod_id_list.append(mod_entry)
+                            else:
+                                parsed_url = urlparse.urlparse(mod_entry)
+                                parsed_list = urlparse.parse_qs(parsed_url.query)
+                                if 'id' in parsed_list:
+                                    modid_found = parsed_list['id'][0]
+                                    if modid_found in EXISTING_MODS:
+                                        mod_id_list.append(modid_found)
+                                    else:
+                                        print("Mod is not installed on the server")
+                                        exit(1)
+                                else:
+                                    print("Mod is not installed on the server or no ModID found in URL")
+                                    exit(1)
+
+                        serverconfig = configparser.ConfigParser()
+                        serverconfig.read(SERVER_CONF_LOCATION)
+                        EXISTING_MODS = serverconfig[INSTANCE_NAME]['mods'].split(",")
+                        NEW_MODS = list(set(EXISTING_MODS) - set(mod_id_list))
+                        NEW_MODS = [string for string in NEW_MODS if string != ""]  # remove empty string from empty set (if they're there)
+                        
+                        serverconfig[INSTANCE_NAME]['mods'] = ",".join(NEW_MODS)
+
+                        with open(SERVER_CONF_LOCATION, 'w') as serverconfig_file:
+                            serverconfig.write(serverconfig_file)
 
 
         # update config
