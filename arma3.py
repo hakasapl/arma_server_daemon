@@ -124,7 +124,7 @@ def main():
     parser_create = subparsers.add_parser("delete", help="delete arma 3 server installation")
     parser_create.add_argument("name", nargs=1, help="Name of server to be deleted")
 
-    # Update
+    # Update *
     parser_update = subparsers.add_parser("update", help="update existing arma 3 server")
     parser_update.add_argument("name", nargs=1, help="Name of server to be updated")
     parser_update.add_argument("--mods-only", help="Only update mods", action="store_true")
@@ -139,7 +139,7 @@ def main():
     parser_mods_add = subparsers_mods.add_parser("add", help="Add a new mod from the steam workshop")
     parser_mods_add.add_argument("mod", nargs="+", help="URL(s) of mod on steam workshop, or workshop ID")
     
-    # Mods > Delete
+    # Mods > Delete *
     parser_mods_delete = subparsers_mods.add_parser("delete", help="Delete a mod")
     parser_mods_delete.add_argument("mod", nargs="+", help="URL(s) of mod on steam workshop, or workshop ID")
     
@@ -171,7 +171,7 @@ def main():
     # Instance > Mods > List
     parser_instance_mods_disable = subparsers_instance_mods.add_parser("list", help="List enabled mods")
 
-    # Instance > Delete
+    # Instance > Delete *
     parser_instance_delete = subparsers_instance.add_parser("delete", help="Delete instance")
     parser_instance_delete.add_argument("i_name", nargs=1, help="Name of instance")
     
@@ -183,7 +183,7 @@ def main():
     parser_instance_list = subparsers_instance.add_parser("list", help="list instances")
 
     args = parser.parse_args()
-    #print(args)  # DEBUG
+    print(args)  # DEBUG
 
     # Check if steamcmd is available on the system
     steamcmd_exists = which(steamcmd_binary) is not None
@@ -234,17 +234,38 @@ def main():
                 exit(1)
 
             SERVER_DIR = getServerPathFromName(args.name[0], SERVER_LIST)
+            SERVER_CONF_LOCATION = SERVER_DIR + "/config.ini"
 
             if SERVER_DIR is None:
                 print("That server was not found!")
                 exit(1)
 
-            steam_success = getArmaServer(STEAM_USERNAME, STEAM_PASSWORD, SERVER_DIR)
+            def updateMods():
+                serverconfig = configparser.ConfigParser()
+                serverconfig.read(SERVER_CONF_LOCATION)
+                EXISTING_MODS = serverconfig['server']['mods'].split(",")
+                steam_success = getSteamMods(STEAM_USERNAME, STEAM_PASSWORD, EXISTING_MODS, SERVER_DIR)
 
-            if steam_success == 0:
-                print("Server updated successfully")
+                if steam_success == 0:
+                    print("Mod(s) updated successfully")
+                else:
+                    exit(steam_success)
+
+            def updateServer():
+                steam_success = getArmaServer(STEAM_USERNAME, STEAM_PASSWORD, SERVER_DIR)
+
+                if steam_success == 0:
+                    print("Server updated successfully")
+                else:
+                    exit(steam_success)
+
+            if args.mods_only:
+                updateMods()
+            elif args.server_only:
+                updateServer()
             else:
-                exit(steam_success)
+                updateMods()
+                updateServer()
 
         if args.subcommand == 'mods':
             SERVER_DIR = getServerPathFromName(args.name[0], SERVER_LIST)
@@ -446,8 +467,8 @@ def main():
                 exit(1)
 
         # update config
-        config['steam'] = {}
         if args.save:
+            config['steam'] = {}
             if 'STEAM_USERNAME' in locals():
                 config['steam']['user'] = STEAM_USERNAME
 
