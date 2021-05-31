@@ -5,14 +5,17 @@ import configparser
 import subprocess
 import urllib.parse as urlparse
 import shutil
+from getpass import getpass
 
-steamcmd_binary = "steamcmd"
-tmux_binary = "tmux"
-def_config_file = "config.ini"
+BINARY_STEAMCMD = "steamcmd"
+CONFIG_FILE_MAIN_DIR = os.getenv("HOME") + "/.config/arma3_wrapper"
+CONFIG_FILE_MAIN_FILE = "config.ini"
+CONFIG_FILE_MAIN = CONFIG_FILE_MAIN_DIR + "/" + CONFIG_FILE_MAIN_FILE
+CONFIG_FILE_SERVER = "config.ini"
 
-SERVER_MOD_DIR = "steamapps/workshop/content/107410/"
 STEAM_ARMA3_DEDSERVER_CODE = "233780"
 STEAM_ARMA3_WORKSHOP_CODE = "107410"
+SERVER_MOD_DIR = "steamapps/workshop/content/" + STEAM_ARMA3_WORKSHOP_CODE + "/"
 
 def printSteamHeaderStart():
     print("\n####################")
@@ -55,7 +58,7 @@ def getSteamMods(username, password, mod_ids, dir):
 def startServer(path, profile, port, mods):
     configPath = profile + "/" + "server.cfg"
     modList = ";".join(mods)
-    arma3server_run = subprocess.run(["./arma3server", "-config=" + configPath, "-port="+ port, "-profile="+ profile, "-mod=" + modList], cwd=path)
+    arma3server_run = subprocess.run(["./arma3server", "-config=" + configPath, "-port=" + port, "-profiles=" + profile, "-mod=" + modList], cwd=path)
 
     return arma3server_run
 
@@ -90,21 +93,25 @@ def getServerPathFromName(name, serverlist):
     return None
 
 def getModName(dir):
-    file = dir + "/mod.cpp"
+    files = [dir + "/mod.cpp", dir + "/meta.cpp"]  # check both files
 
-    with open(file, "r") as meta:
-        for line in meta:
-            if line.startswith("name"):
-                name = line.partition("\"")[2]
-                name = name.partition("\"")[0]
-                return name
+    for file in files:
+        if not os.path.isfile(file):
+            continue
+
+        with open(file, "r") as meta:
+            for line in meta:
+                if line.startswith("name"):
+                    name = line.partition("\"")[2]
+                    name = name.partition("\"")[0]
+                    return name
 
     return ""
 
 def main():
     # load existing config
     config = configparser.ConfigParser()
-    config.read(def_config_file)
+    config.read(CONFIG_FILE_MAIN)
     if 'steam' in config:
         if 'user' in config['steam']:
             STEAM_USERNAME = config['steam']['user']
@@ -193,26 +200,32 @@ def main():
     #print(args)  # DEBUG
 
     # Check if steamcmd is available on the system
-    steamcmd_exists = which(steamcmd_binary) is not None
+    steamcmd_exists = which(BINARY_STEAMCMD) is not None
     if not steamcmd_exists:
         print("SteamCMD is not available on this system or is not available in the path.")
         exit(1)
 
     if args.subcommand is not None:
-        SERVER_NAME = args.name[0]
-        SERVER_DIR = getServerPathFromName(SERVER_NAME)  # will return none if nonexistant
-        SERVER_CONF_LOCATION = SERVER_DIR + "/config.ini"
-
         serverconfig = configparser.ConfigParser()
-        if os.path.isfile(SERVER_CONF_LOCATION):
-            serverconfig.read(SERVER_CONF_LOCATION)
+        SERVER_NAME = args.name[0]
+        if 'SERVER_LIST' in locals():
+            SERVER_DIR = getServerPathFromName(SERVER_NAME, SERVER_LIST)  # will return none if nonexistant
+            if SERVER_DIR is None and args.subcommand != 'create':
+                print("Server not found!")
+                exit(1)
+
+            if SERVER_DIR is not None:
+                SERVER_CONF_LOCATION = SERVER_DIR + "/config.ini"
+
+                if os.path.isfile(SERVER_CONF_LOCATION):
+                    serverconfig.read(SERVER_CONF_LOCATION)
 
         if args.subcommand == 'create' or args.subcommand == 'update' or args.subcommand == 'mods':
             if 'STEAM_USERNAME' not in locals():
                 STEAM_USERNAME = input("What is your steam username? ")
 
             if 'STEAM_PASSWORD' not in locals():
-                STEAM_PASSWORD = input("What is your steam password? ")
+                STEAM_PASSWORD = getpass("What is your steam password? ")
 
         if args.subcommand == 'create':
             SERVER_DIR = input("Installation directory for server? ")
@@ -344,6 +357,11 @@ def main():
             if args.subtask != 'list':
                 INSTANCE_NAME = args.i_name[0]
 
+            if args.subtask == 'mods' or args.subtask == 'delete' or args.subtask == 'start':
+                if INSTANCE_NAME not in serverconfig:
+                    print("Instance not found!")
+                    exit(1)
+
             if args.subtask == 'add':
                 # add new instance
 
@@ -354,8 +372,7 @@ def main():
                     INSTANCE_DIR = DEF_LOC
                 
                 # create directory
-                if not os.path.exists(INSTANCE_DIR):
-                    os.makedirs(INSTANCE_DIR)
+                os.makedirs(INSTANCE_DIR, exist_ok=True)
 
                 # copy template conf file
                 shutil.copyfile("server.cfg.template", INSTANCE_DIR + "/server.cfg")
@@ -379,6 +396,10 @@ def main():
 
                         mod_id_list = []
                         for mod_entry in args.mod:
+                            if mod_entry == "*":
+                                mod_id_list = AVAILABLE_MODS
+                                break
+
                             if mod_entry in AVAILABLE_MODS:
                                 mod_id_list.append(mod_entry)
                             else:
@@ -487,7 +508,10 @@ def main():
         if 'SERVER_LIST' in locals():
             config['state']['serverlist'] = ",".join(SERVER_LIST)
 
-        with open(def_config_file, 'w') as config_file:
+        # check to make sure dir exists
+        os.makedirs(CONFIG_FILE_MAIN_DIR, exist_ok=True)
+
+        with open(CONFIG_FILE_MAIN, 'w') as config_file:
             config.write(config_file)
 
 if __name__ == '__main__':
