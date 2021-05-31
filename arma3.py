@@ -11,41 +11,44 @@ tmux_binary = "tmux"
 def_config_file = "config.ini"
 
 SERVER_MOD_DIR = "steamapps/workshop/content/107410/"
+STEAM_ARMA3_DEDSERVER_CODE = "233780"
+STEAM_ARMA3_WORKSHOP_CODE = "107410"
 
-def getArmaServer(username, password, dir):
-    arma3_server_steam_code = "233780"
+def printSteamHeaderStart():
     print("\n####################")
     print("Starting SteamCMD...")
     print("####################\n")
 
-    # automated steamcmd command
-    steamcmd_run = subprocess.run(["steamcmd", "+login", username, password, "+force_install_dir", dir, "+app_update", arma3_server_steam_code, "validate", "+quit"])
-
+def printSteamHeaderEnd():
     print("\n####################")
     print("SteamCMD Closed")
     print("####################\n")
 
+def getArmaServer(username, password, dir):
+    
+    printSteamHeaderStart()
+
+    # automated steamcmd command
+    steamcmd_run = subprocess.run(["steamcmd", "+login", username, password, "+force_install_dir", dir, "+app_update", STEAM_ARMA3_DEDSERVER_CODE, "validate", "+quit"])
+
+    printSteamHeaderEnd
+
     return steamcmd_run.returncode
 
 def getSteamMods(username, password, mod_ids, dir):
-    arma3_workshop_code = "107410"
-
-    print("\n####################")
-    print("Starting SteamCMD...")
-    print("####################\n")
+    
+    printSteamHeaderStart()
 
     # automated steamcmd command
     mod_requests = []
     for mod_id in mod_ids:
         mod_requests.append("+workshop_download_item")
-        mod_requests.append(arma3_workshop_code)
+        mod_requests.append(STEAM_ARMA3_WORKSHOP_CODE)
         mod_requests.append(mod_id)
     
     steamcmd_run = subprocess.run(["steamcmd", "+login", username, password, "+force_install_dir", dir] + mod_requests + ["+quit"])
 
-    print("\n####################")
-    print("SteamCMD Closed")
-    print("####################\n")
+    printSteamHeaderEnd()
 
     return steamcmd_run.returncode
 
@@ -74,6 +77,10 @@ def getServerPathFromName(name, serverlist):
     SERVER_NAME = None
     for server in serverlist:
         serverconfig = configparser.ConfigParser()
+        conffile = server + "/config.ini"
+        if not os.path.isfile(conffile):
+            return None
+        
         serverconfig.read(server + "/config.ini")
         SERVER_DIR = serverconfig['general']['path']
         SERVER_NAME = serverconfig['general']['name']
@@ -120,11 +127,11 @@ def main():
     parser_create = subparsers.add_parser("create", help="create a new arma 3 server installation")
     parser_create.add_argument("name", nargs=1, help="Name of server to be created")
 
-    # Delete
+    # Delete *
     parser_create = subparsers.add_parser("delete", help="delete arma 3 server installation")
     parser_create.add_argument("name", nargs=1, help="Name of server to be deleted")
 
-    # Update *
+    # Update
     parser_update = subparsers.add_parser("update", help="update existing arma 3 server")
     parser_update.add_argument("name", nargs=1, help="Name of server to be updated")
     parser_update.add_argument("--mods-only", help="Only update mods", action="store_true")
@@ -183,7 +190,7 @@ def main():
     parser_instance_list = subparsers_instance.add_parser("list", help="list instances")
 
     args = parser.parse_args()
-    print(args)  # DEBUG
+    #print(args)  # DEBUG
 
     # Check if steamcmd is available on the system
     steamcmd_exists = which(steamcmd_binary) is not None
@@ -193,6 +200,13 @@ def main():
 
     if args.subcommand is not None:
         SERVER_NAME = args.name[0]
+        SERVER_DIR = getServerPathFromName(SERVER_NAME)  # will return none if nonexistant
+        SERVER_CONF_LOCATION = SERVER_DIR + "/config.ini"
+
+        serverconfig = configparser.ConfigParser()
+        if os.path.isfile(SERVER_CONF_LOCATION):
+            serverconfig.read(SERVER_CONF_LOCATION)
+
         if args.subcommand == 'create' or args.subcommand == 'update' or args.subcommand == 'mods':
             if 'STEAM_USERNAME' not in locals():
                 STEAM_USERNAME = input("What is your steam username? ")
@@ -214,7 +228,6 @@ def main():
 
             print("Writing server config...")
             
-            serverconfig = configparser.ConfigParser()
             serverconfig['general'] = {}
             serverconfig['general']['name'] = SERVER_NAME
             serverconfig['general']['path'] = SERVER_DIR
@@ -233,16 +246,11 @@ def main():
                 print("No servers are available!")
                 exit(1)
 
-            SERVER_DIR = getServerPathFromName(args.name[0], SERVER_LIST)
-            SERVER_CONF_LOCATION = SERVER_DIR + "/config.ini"
-
             if SERVER_DIR is None:
                 print("That server was not found!")
                 exit(1)
 
             def updateMods():
-                serverconfig = configparser.ConfigParser()
-                serverconfig.read(SERVER_CONF_LOCATION)
                 EXISTING_MODS = serverconfig['server']['mods'].split(",")
                 steam_success = getSteamMods(STEAM_USERNAME, STEAM_PASSWORD, EXISTING_MODS, SERVER_DIR)
 
@@ -267,10 +275,16 @@ def main():
                 updateMods()
                 updateServer()
 
-        if args.subcommand == 'mods':
-            SERVER_DIR = getServerPathFromName(args.name[0], SERVER_LIST)
-            SERVER_CONF_LOCATION = SERVER_DIR + "/config.ini"
+        if args.subcommand == 'delete':
+            if SERVER_DIR is None:
+                print("That server was not found!")
+                exit(1)
 
+            confirm = input("Are you sure you want to delete ALL CONTENTS of " + SERVER_DIR + "? [Y,n] ")
+            if confirm == "Y":
+                shutil.rmtree(SERVER_DIR)
+
+        if args.subcommand == 'mods':
             if SERVER_DIR is None:
                 print("That server was not found!")
                 exit(1)
@@ -300,8 +314,6 @@ def main():
                         path = SERVER_DIR + "/" + SERVER_MOD_DIR + mod_id
                         lowercase_all(path)
 
-                    serverconfig = configparser.ConfigParser()
-                    serverconfig.read(SERVER_CONF_LOCATION)
                     EXISTING_MODS = serverconfig['server']['mods'].split(",")
                     EXISTING_EXCLUSIVE = list(set(EXISTING_MODS) - set(mod_id_list))
                     NEW_MODS = EXISTING_EXCLUSIVE + mod_id_list
@@ -313,12 +325,13 @@ def main():
                         serverconfig.write(serverconfig_file)
 
             if args.subtask == 'delete':
-                print("Not yet implemented")
-                exit(1)
+                for mod in args.mod:
+                    path = SERVER_DIR + "/" + SERVER_MOD_DIR + mod
+                    if os.path.isdir(path):
+                        shutil.rmtree(path)
+                        print("Removed " + mod)
 
             if args.subtask == 'list':
-                serverconfig = configparser.ConfigParser()
-                serverconfig.read(SERVER_CONF_LOCATION)
                 EXISTING_MODS = serverconfig['server']['mods'].split(",")
 
                 print("Workshop ID\t\tMod Name")
@@ -328,15 +341,11 @@ def main():
                     print(mod + "\t\t" + name)
 
         if args.subcommand == 'instance':
-            SERVER_DIR = getServerPathFromName(args.name[0], SERVER_LIST)
-            SERVER_CONF_LOCATION = SERVER_DIR + "/config.ini"
-
-            serverconfig = configparser.ConfigParser()
-            serverconfig.read(SERVER_CONF_LOCATION)
+            if args.subtask != 'list':
+                INSTANCE_NAME = args.i_name[0]
 
             if args.subtask == 'add':
                 # add new instance
-                INSTANCE_NAME = args.i_name[0]
 
                 # get location
                 DEF_LOC = SERVER_DIR + "/instances/" + INSTANCE_NAME
@@ -362,7 +371,6 @@ def main():
                 print("Instance created")
 
             if args.subtask == 'mods':
-                INSTANCE_NAME = args.i_name[0]
                 # modify instance
                 if args.subsubtask == 'enable':
                     if args.mod is not None:
@@ -440,7 +448,6 @@ def main():
                         print(mod + "\t\t" + name)
             
             if args.subtask == 'start':
-                INSTANCE_NAME = args.i_name[0]
                 # start an instance
 
                 if INSTANCE_NAME not in serverconfig:
@@ -463,8 +470,9 @@ def main():
                         print(header + "\t\t" + serverconfig[header]['path'])
 
             if args.subtask == 'delete':
-                print("Not yet implemented")
-                exit(1)
+                confirm = input("Are you sure you want to delete ALL CONTENTS of " + INSTANCE_DIR + "? [Y,n] ")
+                if confirm == "Y":
+                    shutil.rmtree(INSTANCE_DIR)
 
         # update config
         if args.save:
