@@ -17,6 +17,8 @@ STEAM_ARMA3_DEDSERVER_CODE = "233780"
 STEAM_ARMA3_WORKSHOP_CODE = "107410"
 SERVER_MOD_DIR = "steamapps/workshop/content/" + STEAM_ARMA3_WORKSHOP_CODE + "/"
 
+ALLOWED_INSTANCE_PARAM_FIELDS = [ "path", "mods", "port" ]
+
 def printSteamHeaderStart():
     print("\n####################")
     print("Starting SteamCMD...")
@@ -168,6 +170,11 @@ def main():
     # Instance > Add
     parser_instance_add = subparsers_instance.add_parser("add", help="Add a new instance")
     parser_instance_add.add_argument("i_name", nargs=1, help="Name of instance")
+    
+    # Instance > Update
+    parser_instance_update = subparsers_instance.add_parser("update", help="Update parameter of instance")
+    parser_instance_update.add_argument("i_name", nargs=1, help="Name of instance")
+    parser_instance_update.add_argument("i_param", nargs="+", type=str, help="field=value parameter")
     
     # Instance > Mods
     parser_instance_mods = subparsers_instance.add_parser("mods", help="Enable/disable mods on instance")
@@ -386,6 +393,21 @@ def main():
                     serverconfig.write(serverconfig_file)
 
                 print("Instance created")
+
+            if args.subtask == 'update':
+                # update parameter of instance
+                input_params = args.i_param
+                for set_param in input_params:
+                    parts = set_param.split("=")
+                    field = parts[0]
+                    value = parts[1]
+
+                    if field in ALLOWED_INSTANCE_PARAM_FIELDS:
+                        serverconfig[INSTANCE_NAME][field] = value
+                        print("Setting parameter '%s' to '%s' for instance '%s'" % (field, value, INSTANCE_NAME))
+
+                with open(SERVER_CONF_LOCATION, 'w') as serverconfig_file:
+                            serverconfig.write(serverconfig_file)
 
             if args.subtask == 'mods':
                 # modify instance
